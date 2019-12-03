@@ -2,8 +2,12 @@ module Main where
 
 import Day1
 import Day2
+import Day3
 import System.IO
 import Data.List.Split
+import Data.Set
+import Text.ParserCombinators.ReadP
+
 
 day1_fuel :: String -> [Fuel]
 day1_fuel = fmap (calculateFuel . read) . lines
@@ -34,3 +38,7 @@ main = do
     print $ day2 (12,2) instructions
     putStr "[Day 2-2] Result:"
     print $ day2_look instructions
+    r_day3 <- readFile "./app/input_day3"
+    putStr "[Day 3-1] Result: "
+    print $ getNumber r_day3
+    
