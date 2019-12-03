@@ -34,11 +34,11 @@ main = do
     print (sum fs + (sum . fmap calculateFuelOfFuel) fs)
     r_day2 <- readFile "./app/input_day2"
     let instructions = day2_instructions r_day2
-    putStr "[Day 2-1] Result:"
+    putStr "[Day 2-1] Result: "
     print $ day2 (12,2) instructions
-    putStr "[Day 2-2] Result:"
+    putStr "[Day 2-2] Result: "
     print $ day2_look instructions
     r_day3 <- readFile "./app/input_day3"
-    putStr "[Day 3-1] Result: "
-    print $ getNumber r_day3
-    
+    putStr "[Day 3] Result: "
+    print $ getDistanceAndSteps r_day3
+

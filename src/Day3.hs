@@ -1,13 +1,14 @@
 module Day3
     (
-        module Day3
+        getDistanceAndSteps
     ) where
 
 import Numeric.Natural
 import Text.ParserCombinators.ReadP
 import Data.Char
 import Control.Applicative
-import Data.Set as S
+import Data.Map as M
+import Data.List
 
 data Instruction = R Natural
                  | L Natural
@@ -32,47 +33,56 @@ readInstruction = do
         _ -> error "fail instruction"
 
 type Coord = (Integer, Integer)
+type MyMap = M.Map Coord Natural
 
 executeInstruction :: Coord
+                   -> Natural
                    -> Instruction
-                   -> S.Set Coord
-                   -> (S.Set Coord, Coord)
-executeInstruction (x,y) (R n) s = (go (fromIntegral n) s, (x,y + fromIntegral n))
-    where go 0  s' = s'
-          go n' s'  = S.insert (x,y + n') (go (n' - 1) s')
-executeInstruction (x,y) (L n) s = (go (fromIntegral n) s, (x,y - fromIntegral n))
-    where go 0  s' = s'
-          go n' s'  = S.insert (x,y - n') (go (n' - 1) s')
-executeInstruction (x,y) (U n) s = (go (fromIntegral n) s, (x + fromIntegral n,y))
-    where go 0  s' = s'
-          go n' s'  = S.insert (x + n',y) (go (n' - 1) s')
-executeInstruction (x,y) (D n) s = (go (fromIntegral n) s, (x - fromIntegral n,y))
-    where go 0  s' = s'
-          go n' s'  = S.insert (x - n',y) (go (n' - 1) s')
+                   -> MyMap
+                   -> (MyMap, Coord, Natural)
+executeInstruction (x,y) steps (R n) s = (go 1 s, (x + fromIntegral n, y), steps + n)
+    where go n' s'
+            | n' == fromIntegral n + 1 = s'
+            | otherwise = M.insertWith min (x + n', y) (steps + fromInteger n') (go (n'+ 1) s')
+executeInstruction (x,y) steps (L n) s = (go 1 s, (x - fromIntegral n,y), steps + n)
+    where go n' s'
+            | n' == fromIntegral n + 1 = s'
+            | otherwise = M.insertWith min (x - n', y) (steps + fromInteger n') (go (n'+ 1) s')
+executeInstruction (x,y) steps (U n) s = (go 1 s, (x,y + fromIntegral n), steps + n)
+    where go n' s'
+            | n' == fromIntegral n + 1 = s'
+            | otherwise = M.insertWith min (x, y + n') (steps + fromInteger n') (go (n'+ 1) s')
+executeInstruction (x,y) steps (D n) s = (go 1 s, (x,y - fromIntegral n), steps + n)
+    where go n' s'
+            | n' == fromIntegral n + 1 = s'
+            | otherwise = M.insertWith min (x, y - n') (steps + fromInteger n') (go (n'+ 1) s')
 
-executeAllInstructions :: Line -> Coord -> S.Set Coord
-executeAllInstructions [] _ = S.empty
-executeAllInstructions (x:xs) c =
-    let (s, c') = executeInstruction c x S.empty in
-        union s (executeAllInstructions xs c')
+executeAllInstructions :: Line -> Coord -> Natural -> MyMap
+executeAllInstructions [] _ _ = M.empty
+executeAllInstructions (x:xs) c steps =
+    let (s, c', steps') = executeInstruction c steps x M.empty in
+        M.unionWith min s (executeAllInstructions xs c' steps')
 
-executeForAllLines :: [Line] -> Coord -> [S.Set Coord]
-executeForAllLines [] _ = []
-executeForAllLines (x:xs) c =
-    executeAllInstructions x c : executeForAllLines xs c
+executeForAllLines :: [Line] -> Coord -> Natural -> [MyMap]
+executeForAllLines [] _ _ = []
+executeForAllLines (x:xs) c steps =
+    executeAllInstructions x c steps : executeForAllLines xs c steps
 
-getIntersection :: [S.Set Coord] -> S.Set Coord
-getIntersection [] = S.empty
-getIntersection (x:xs) = Prelude.foldr S.intersection x xs
+getIntersection :: [MyMap] -> M.Map Coord [Natural]
+getIntersection [] = M.empty
+getIntersection (x:xs) = Prelude.foldr (M.intersectionWith (:)) (M.map (:[]) x) xs
 
 getDistance :: Coord -> Integer
 getDistance (x,y) = abs x + abs y
 
-getSmallest :: S.Set Coord -> Integer
-getSmallest = S.findMin . S.map getDistance
+getSmallest :: M.Map Coord [Natural] -> Integer
+getSmallest = fst . M.findMin . M.mapKeys getDistance
 
-getNumber :: String -> Integer
-getNumber s = getSmallest c
+getSmallest' :: M.Map Coord [Natural] -> Integer
+getSmallest' m = let m' = M.map (fromIntegral . sum) m in minimum m'
+
+getDistanceAndSteps :: String -> (Integer, Integer)
+getDistanceAndSteps s = (getSmallest c, getSmallest' c)
     where c = getIntersection cs
-          cs = executeForAllLines ls (0,0)
+          cs = executeForAllLines ls (0,0) 0
           ls = fst . last . readP_to_S readInstructions <$> lines s
