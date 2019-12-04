@@ -3,6 +3,7 @@ module Main where
 import Day1
 import Day2
 import Day3
+import Day4
 import System.IO
 import Data.List.Split
 import Data.Set
@@ -41,4 +42,8 @@ main = do
     r_day3 <- readFile "./app/input_day3"
     putStr "[Day 3] Result: "
     print $ getDistanceAndSteps r_day3
+    putStr "[Day 4-1] Result: "
+    print getNumberOfPasswords
+    putStr "[Day 4-2] Result: "
+    print getNumberOfPasswords'
 
