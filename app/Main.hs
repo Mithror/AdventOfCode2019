@@ -4,6 +4,7 @@ import Day1
 import Day2
 import Day3
 import Day4
+import Day5
 import System.IO
 import Data.List.Split
 import Data.Set
@@ -17,7 +18,7 @@ day2_instructions :: String -> [Integer]
 day2_instructions = fmap read . splitOn ","
 
 day2 :: (Integer, Integer) -> [Integer] -> Integer
-day2 t = head . execute t
+day2 t = head . Day2.execute t
 
 day2_look :: [Integer] -> Integer
 day2_look xs = head $ [ 100*noun + verb |
@@ -46,4 +47,8 @@ main = do
     print getNumberOfPasswords
     putStr "[Day 4-2] Result: "
     print getNumberOfPasswords'
-
+    r_day5 <- readFile "./app/input_day5"
+    putStr "[Day 5-1] Result: "
+    print . last $ Day5.execute 1 r_day5
+    putStr "[Day 5-2] Result: "
+    print . last $ Day5.execute 5 r_day5

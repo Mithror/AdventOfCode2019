@@ -23,6 +23,9 @@ dependencies:
 - base >= 4.7 && < 5
 - containers >= 0.6
 - split >= 0.1
+- text >= 1.2
+- attoparsec >= 0.13
+- vector >= 0.12
 
 library:
   source-dirs: src
