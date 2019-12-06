@@ -5,6 +5,7 @@ import Day2
 import Day3
 import Day4
 import Day5
+import Day6
 import System.IO
 import Data.List.Split
 import Data.Set
@@ -52,3 +53,8 @@ main = do
     print . last $ Day5.execute 1 r_day5
     putStr "[Day 5-2] Result: "
     print . last $ Day5.execute 5 r_day5
+    r_day6 <- readFile "./app/input_day6"
+    putStr "[Day 6-1] Result: "
+    print $ countOrbits r_day6
+    putStr "[Day 6-2] Result: "
+    print $ nOrbits r_day6
