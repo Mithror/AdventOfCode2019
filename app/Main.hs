@@ -6,6 +6,7 @@ import Day3
 import Day4
 import Day5
 import Day6
+import Day7
 import System.IO
 import Data.List.Split
 import Data.Set
@@ -58,3 +59,8 @@ main = do
     print $ countOrbits r_day6
     putStr "[Day 6-2] Result: "
     print $ nOrbits r_day6
+    r_day7 <- readFile "./app/input_day7"
+    putStr "[Day 7-1] Result: "
+    print $ findMaxAmp r_day7
+    putStr "[Day 7-2] Result: "
+    print $ findMaxAmpWithFB r_day7
