@@ -8,6 +8,7 @@ import Day5
 import Day6
 import Day7
 import Day8
+import Day9
 import System.IO
 import Data.List.Split
 import Data.Set
@@ -70,3 +71,8 @@ main = do
     print $ day8_result1 r_day8
     putStrLn "[Day 8-2] Result: "
     day8_result2 r_day8
+    r_day9 <- readFile "./app/input_day9"
+    putStr "[Day 9-1] Result: "
+    print $ day9_result1 r_day9
+    putStr "[Day 9-2] Result: "
+    print $ day9_result2 r_day9
