@@ -7,6 +7,7 @@ import Day4
 import Day5
 import Day6
 import Day7
+import Day8
 import System.IO
 import Data.List.Split
 import Data.Set
@@ -64,3 +65,8 @@ main = do
     print $ findMaxAmp r_day7
     putStr "[Day 7-2] Result: "
     print $ findMaxAmpWithFB r_day7
+    r_day8 <- readFile "./app/input_day8"
+    putStr "[Day 8-1] Result: "
+    print $ day8_result1 r_day8
+    putStrLn "[Day 8-2] Result: "
+    day8_result2 r_day8
