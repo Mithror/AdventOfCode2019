@@ -16,9 +16,9 @@ calculateAmpForPhases phases p = foldr f 0 $ reverse phases
         where f a b = calculateAmp a b p
 
 calculateAmp :: Integer -> Integer -> String -> Integer
-calculateAmp phase input = fromJust
+calculateAmp phase input = head
                          . snd
-                         . getOutput
+                         . getOutputs
                          . flip runProgram (Just input)
                          . flip runProgram (Just phase)
                          . parseProgram
@@ -44,6 +44,6 @@ runRest i ps =
 runLoop :: Input -> [Program] -> ([Program], Output)
 runLoop i [] = ([],i)
 runLoop i (x:xs) =
-    let (p, mo) = getOutput $ runProgram x (Just i)
-        (ps, o) = runLoop (fromJust mo) xs in
-            (p : ps, o)
+    let (p, os) = getOutputs $ runProgram x (Just i)
+        (ps, o') = runLoop (head os) xs in
+            (p : ps, o')

@@ -7,7 +7,7 @@ module IntCode
     ,   Program(..)
     ,   parseProgram
     ,   runProgram
-    ,   getOutput
+    ,   getOutputs
     ,   isHalted
     ) where
 
@@ -17,55 +17,67 @@ import Control.Applicative
 import qualified Data.Text as T
 import qualified Data.Attoparsec.Text as P
 import qualified Data.Vector as V
+import qualified Data.Map as M
 
-data ADDR = POSITION Int
-          | IMMEDIATE Integer
-          deriving (Show)
+import Debug.Trace
+
+-- type Memory = V.Vector Integer
+type Memory = M.Map Int Integer
+
+newtype ADDR = ADDR { runADDR :: Program -> Integer }
+newtype WADDR = WADDR { runWADDR :: Program -> Int }
+        --     POSITION Int
+        --   | IMMEDIATE Integer
+        --  deriving (Show)
+-- instance Show ADDR where
+--     show a = "_"
 
 type Input = Integer
 type Output = Integer
 
-data Instruction = ADD ADDR ADDR Int
-                 | MUL ADDR ADDR Int
-                 | STORE Int
-                 | LOAD  Int
+data Instruction = ADD ADDR ADDR WADDR
+                 | MUL ADDR ADDR WADDR
+                 | STORE WADDR
+                 | LOAD ADDR --{ runLoad :: Program -> Integer }
                  | JMPT ADDR ADDR
                  | JMPF ADDR ADDR
-                 | LT' ADDR ADDR Int
-                 | EQ' ADDR ADDR Int
+                 | LT' ADDR ADDR WADDR
+                 | EQ' ADDR ADDR WADDR
+                 | RB ADDR --{ runLoad :: Program -> Integer }
                  | HALT
-                 deriving (Show)
+                --  deriving (Show)
 
-type Memory = V.Vector Integer
 type PC = Int
 -- type RunningProg = ([Input], Memory, PC, [Output])
 
 data Program = RUNNING { memory :: Memory
                        , pc ::PC
-                       , output :: Maybe Output }
+                       , output :: [Output]
+                       , rbase :: Integer }
              | WAITING { memory :: Memory
                        , pc ::PC
-                       , output :: Maybe Output }
-             | HALTED { outputs :: Output }
+                       , output :: [Output]
+                       , rbase :: Integer }
+             | HALTED { outputs :: [Output] }
              deriving (Show)
 
 parseProgram :: String -> Program
-parseProgram s = WAITING (parseMemory (T.pack s)) 0 Nothing
+parseProgram s = RUNNING (parseMemory (T.pack s)) 0 [] 0
 
 parseMemory :: T.Text -> Memory
 parseMemory t =
     let parsed = P.parse (P.sepBy1 (P.signed P.decimal) (P.char ',')) t in
         case parsed of
-            P.Done _ r -> V.fromList r
-            P.Partial f -> V.fromList $
+            P.Done _ r -> M.fromList $ zip [0..] r
+            P.Partial f -> M.fromList . zip [0..] $
                 fromMaybe []
                           (P.maybeResult (P.feed parsed ""))
-            _ -> V.empty
+            _ -> M.empty
 
-getOutput :: Program -> (Program, Maybe Output)
-getOutput (HALTED o) = (HALTED o, Just o)
-getOutput (RUNNING m c o) = (RUNNING m c Nothing, o)
-getOutput (WAITING m c o) = (WAITING m c Nothing, o)
+getOutputs :: Program -> (Program, [Output])
+getOutputs (HALTED o) = (HALTED o, o)
+getOutputs (RUNNING m c o b) = (RUNNING m c [] b, o)
+getOutputs (WAITING m c o b) = (WAITING m c [] b, o)
 
 isHalted :: Program -> Bool
 isHalted HALTED{} = True
@@ -73,41 +85,58 @@ isHalted _ = False
 
 runProgram :: Program -> Maybe Input -> Program
 runProgram p@HALTED{} _ = p
-runProgram p@(WAITING m c o) Nothing = p
-runProgram (WAITING m c o) mi = runProgram (RUNNING m c o) mi
-runProgram p@(RUNNING m' pc _) i =
+runProgram p@WAITING{} Nothing = p
+runProgram (WAITING m c o b) mi = runProgram (RUNNING m c o b) mi
+runProgram p@(RUNNING m' pc _ _) i =
     let inst = parseInstruction m' pc
         (p', input) = executeInstruction i p inst in
-        runProgram p' input
+          runProgram p' input
+
+fd :: Memory -> Int -> Integer
+fd m i = M.findWithDefault 0 i m
 
 parseInstruction :: Memory -> PC -> Instruction
 parseInstruction p i =
-    let inst     = p V.! i
-        a        = (inst `div` 10000) /= 0
-        b        = (inst `mod` 10000) `div` 1000 /= 0
-        c        = (inst `mod` 1000)  `div` 100 /= 0
+    let inst     = p `fd` i
+        a        = (inst `div` 10000)
+        b        = (inst `mod` 10000) `div` 1000
+        c        = (inst `mod` 1000)  `div` 100
         de       = (inst `mod` 100)
-        addr b a = if b then IMMEDIATE a else POSITION (fromInteger a)
+        -- addr b a = case b of
+        --              0 -> ADDR $ fromIntegral . flip fd (fromInteger a) . memory
+        --              1 -> ADDR $ const (fromIntegral a)
+        --              2 -> ADDR $ fromInteger . (+a) . rbase
+        --              _ -> error "not supported mode"
+        waddr b a = case b of
+                    0 -> WADDR $ fromInteger . const a
+                    2 -> WADDR $ fromInteger . (+a) . rbase
+                    _ -> error $ "not supported write mode " ++ show b ++ " " ++ show a
+        raddr b a = case b of
+                      0 -> ADDR $ flip fd (fromInteger a) . memory
+                      1 -> ADDR $ const a
+                      2 -> ADDR $ \p -> fd (memory p) (fromInteger $ rbase p + a)
+                      _ -> error $ "not supported load mode " ++ show b ++ " " ++ show a
     in
         case de of
-            1 -> ADD (addr c (p V.! (i+1)))
-                     (addr b (p V.! (i+2)))
-                     (fromInteger (p V.! (i+3)))
-            2 -> MUL (addr c (p V.! (i+1)))
-                     (addr b (p V.! (i+2)))
-                     (fromInteger (p V.! (i+3)))
-            3 -> STORE $ fromInteger (p V.! (i+1))
-            4 -> LOAD  $ fromInteger (p V.! (i+1))
-            5 -> JMPT (addr c (p V.! (i+1))) (addr b (p V.! (i+2)))
-            6 -> JMPF (addr c (p V.! (i+1))) (addr b (p V.! (i+2)))
-            7 -> LT' (addr c (p V.! (i+1)))
-                     (addr b (p V.! (i+2)))
-                     (fromInteger (p V.! (i+3)))
-            8 -> EQ' (addr c (p V.! (i+1)))
-                     (addr b (p V.! (i+2)))
-                     (fromInteger (p V.! (i+3)))
+            1 -> ADD (raddr c (p `fd` (i+1)))
+                     (raddr b (p `fd` (i+2)))
+                     (waddr a (p `fd` (i+3)))
+            2 -> MUL (raddr c (p `fd` (i+1)))
+                     (raddr b (p `fd` (i+2)))
+                     (waddr a (p `fd` (i+3)))
+            3 -> STORE $  waddr c (p `fd` (i+1))
+            4 -> LOAD $ raddr c (p `fd` (i+1))
+            5 -> JMPT (raddr c (p `fd` (i+1))) (raddr b (p `fd` (i+2)))
+            6 -> JMPF (raddr c (p `fd` (i+1))) (raddr b (p `fd` (i+2)))
+            7 -> LT' (raddr c (p `fd` (i+1)))
+                     (raddr b (p `fd` (i+2)))
+                     (waddr a (p `fd` (i+3)))
+            8 -> EQ' (raddr c (p `fd` (i+1)))
+                     (raddr b (p `fd` (i+2)))
+                     (waddr a (p `fd` (i+3)))
+            9 -> RB $ raddr c (p `fd` (i+1))
             99 -> HALT
-            _ -> error $ "unknown instruction " ++ show ((a,b,c), de)
+            _ -> error $ "unknown instruction " ++ show ((a,b,c), de, p, i)
 
 executeInstruction :: Maybe Input
                    -> Program
@@ -115,64 +144,26 @@ executeInstruction :: Maybe Input
                    -> (Program, Maybe Input)
 executeInstruction mi p@(HALTED _) _ = (p, mi)
 executeInstruction Nothing p@WAITING{} _ = (p, Nothing)
-executeInstruction (Just input) p@(WAITING m pc o) i =
-    executeInstruction (Just input) (RUNNING m pc o) i -- try running again
-executeInstruction mi (RUNNING p pc outputs) i =
+-- executeInstruction input p@(WAITING _ _ (Just _) _) _ = (p, input)
+executeInstruction input p@(WAITING m pc o b) i =
+    executeInstruction input (RUNNING m pc o b) i -- try running again
+executeInstruction mi p@(RUNNING m pc outputs base) i =
     case i of
-        ADD (POSITION a) (POSITION b) c   ->
-            (RUNNING (p V.// [(c, (p V.! a) + (p V.! b))]) (pc + 4) outputs, mi)
-        ADD (POSITION a) (IMMEDIATE b) c  ->
-            (RUNNING (p V.// [(c, (p V.! a) + b)]) (pc + 4) outputs, mi)
-        ADD (IMMEDIATE a) (POSITION b) c  ->
-            (RUNNING (p V.// [(c, a + (p V.! b))]) (pc + 4) outputs, mi)
-        ADD (IMMEDIATE a) (IMMEDIATE b) c ->
-            (RUNNING (p V.// [(c, a + b)]) (pc + 4) outputs, mi)
-        MUL (POSITION a) (POSITION b) c   ->
-            (RUNNING (p V.// [(c, (p V.! a) * (p V.! b))]) (pc + 4) outputs, mi)
-        MUL (POSITION a) (IMMEDIATE b) c  ->
-            (RUNNING (p V.// [(c, (p V.! a) * b)]) (pc + 4) outputs, mi)
-        MUL (IMMEDIATE a) (POSITION b) c  ->
-            (RUNNING (p V.// [(c, a * (p V.! b))]) (pc + 4) outputs, mi)
-        MUL (IMMEDIATE a) (IMMEDIATE b) c ->
-            (RUNNING (p V.// [(c, a * b)]) (pc + 4) outputs, mi)
+        ADD a b c   ->
+            (RUNNING (M.insert (runWADDR c p) (fromIntegral (runADDR a p + runADDR b p)) m) (pc + 4) outputs base, mi)
+        MUL a b c   ->
+            (RUNNING (M.insert (runWADDR c p) (fromIntegral (runADDR a p * runADDR b p)) m) (pc + 4) outputs base, mi)
         STORE a -> case mi of
-                        Nothing -> (WAITING p pc outputs, mi)
-                        Just b -> (RUNNING (p V.// [(a, b)]) (pc + 2) outputs, Nothing)
-        LOAD a  -> (RUNNING p (pc + 2) (Just $ p V.! a), mi)
-        JMPT (POSITION a) (POSITION b) ->
-            (RUNNING p (if (p V.! a) /= 0 then fromInteger (p V.! b) else pc + 3) outputs, mi)
-        JMPT (POSITION a) (IMMEDIATE b) ->
-            (RUNNING p (if (p V.! a) /= 0 then fromInteger b else pc + 3) outputs, mi)
-        JMPT (IMMEDIATE a) (POSITION b) ->
-            (RUNNING p (if a /= 0 then fromInteger (p V.! b) else pc + 3) outputs, mi)
-        JMPT (IMMEDIATE a) (IMMEDIATE b) ->
-            (RUNNING p (if a /= 0 then fromInteger b else pc + 3) outputs, mi)
-        JMPF (POSITION a) (POSITION b) ->
-            (RUNNING p (if (p V.! a) == 0 then fromInteger (p V.! b) else pc + 3) outputs, mi)
-        JMPF (POSITION a) (IMMEDIATE b) ->
-            (RUNNING p (if (p V.! a) == 0 then fromInteger b else pc + 3) outputs, mi)
-        JMPF (IMMEDIATE a) (POSITION b) ->
-            (RUNNING p (if a == 0 then fromInteger (p V.! b) else pc + 3) outputs, mi)
-        JMPF (IMMEDIATE a) (IMMEDIATE b) ->
-            (RUNNING p (if a == 0 then fromInteger b else pc + 3) outputs, mi)
-        LT' (POSITION a) (POSITION b) c   ->
-            (RUNNING (p V.// [(c, if (p V.! a) < (p V.! b) then 1 else 0)]) (pc + 4) outputs, mi)
-        LT' (POSITION a) (IMMEDIATE b) c  ->
-            (RUNNING (p V.// [(c, if (p V.! a) < b then 1 else 0)]) (pc + 4) outputs, mi)
-        LT' (IMMEDIATE a) (POSITION b) c  ->
-            (RUNNING (p V.// [(c, if a < (p V.! b) then 1 else 0)]) (pc + 4) outputs, mi)
-        LT' (IMMEDIATE a) (IMMEDIATE b) c ->
-            (RUNNING (p V.// [(c, if a < b then 1 else 0)]) (pc + 4) outputs, mi)
-        EQ' (POSITION a) (POSITION b) c   ->
-            (RUNNING (p V.// [(c, if (p V.! a) == (p V.! b) then 1 else 0)]) (pc + 4) outputs, mi)
-        EQ' (POSITION a) (IMMEDIATE b) c  ->
-            (RUNNING (p V.// [(c, if (p V.! a) == b then 1 else 0)]) (pc + 4) outputs, mi)
-        EQ' (IMMEDIATE a) (POSITION b) c  ->
-            (RUNNING (p V.// [(c, if a == (p V.! b) then 1 else 0)]) (pc + 4) outputs, mi)
-        EQ' (IMMEDIATE a) (IMMEDIATE b) c ->
-            (RUNNING (p V.// [(c, if a == b then 1 else 0)]) (pc + 4) outputs, mi)
-        HALT -> (HALTED (fromJust outputs), mi)
-
-extractHead :: [a] -> Maybe (a, [a])
-extractHead [] = Nothing
-extractHead (x:xs) = Just (x, xs)
+                        Nothing -> (WAITING m pc outputs base, mi)
+                        Just b -> (RUNNING (M.insert (runWADDR a p) b m) (pc + 2) outputs base, Nothing)
+        LOAD a  -> (RUNNING m (pc + 2) (outputs ++ [runADDR a p]) base, mi)
+        JMPT a b ->
+            (RUNNING m (if runADDR a p /= 0 then fromInteger $ runADDR b p else pc + 3) outputs base, mi)
+        JMPF a b ->
+            (RUNNING m (if runADDR a p == 0 then fromInteger $ runADDR b p else pc + 3) outputs base, mi)
+        LT' a b c   ->
+            (RUNNING (M.insert (runWADDR c p) (if runADDR a p < runADDR b p then 1 else 0) m) (pc + 4) outputs base, mi)
+        EQ' a b c   ->
+            (RUNNING (M.insert (runWADDR c p) (if runADDR a p == runADDR b p then 1 else 0) m) (pc + 4) outputs base, mi)
+        RB a -> (RUNNING m (pc + 2) outputs (base + runADDR a p), mi)
+        HALT -> (HALTED outputs, mi)
