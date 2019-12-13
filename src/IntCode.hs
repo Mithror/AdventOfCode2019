@@ -16,53 +16,42 @@ import Data.Maybe
 import Control.Applicative
 import qualified Data.Text as T
 import qualified Data.Attoparsec.Text as P
-import qualified Data.Vector as V
 import qualified Data.Map as M
 
-import Debug.Trace
-
--- type Memory = V.Vector Integer
 type Memory = M.Map Int Integer
-
-newtype ADDR = ADDR { runADDR :: Program -> Integer }
-newtype WADDR = WADDR { runWADDR :: Program -> Int }
-        --     POSITION Int
-        --   | IMMEDIATE Integer
-        --  deriving (Show)
--- instance Show ADDR where
---     show a = "_"
-
 type Input = Integer
 type Output = Integer
-
-data Instruction = ADD ADDR ADDR WADDR
-                 | MUL ADDR ADDR WADDR
-                 | STORE WADDR
-                 | LOAD ADDR --{ runLoad :: Program -> Integer }
-                 | JMPT ADDR ADDR
-                 | JMPF ADDR ADDR
-                 | LT' ADDR ADDR WADDR
-                 | EQ' ADDR ADDR WADDR
-                 | RB ADDR --{ runLoad :: Program -> Integer }
-                 | HALT
-                --  deriving (Show)
-
 type PC = Int
--- type RunningProg = ([Input], Memory, PC, [Output])
 
-data Program = RUNNING { memory :: Memory
-                       , pc ::PC
-                       , output :: [Output]
+data RunState = RUNNING | WAITING | HALTED deriving (Show, Eq)
+data Program = Program { runState :: RunState
+                       , memory :: Memory
+                       , pc :: PC
+                       , outputs :: [Output]
                        , rbase :: Integer }
-             | WAITING { memory :: Memory
-                       , pc ::PC
-                       , output :: [Output]
-                       , rbase :: Integer }
-             | HALTED { outputs :: [Output] }
              deriving (Show)
 
+newtype RADDR = RADDR { runRADDR :: Program -> Integer }
+newtype WADDR = WADDR { runWADDR :: Program -> Int }
+
+data Instruction = ADD RADDR RADDR WADDR
+                 | MUL RADDR RADDR WADDR
+                 | STORE WADDR
+                 | LOAD RADDR
+                 | JMPT RADDR RADDR
+                 | JMPF RADDR RADDR
+                 | LT' RADDR RADDR WADDR
+                 | EQ' RADDR RADDR WADDR
+                 | RB RADDR
+                 | HALT
+
 parseProgram :: String -> Program
-parseProgram s = RUNNING (parseMemory (T.pack s)) 0 [] 0
+parseProgram s = Program { runState = RUNNING
+                         , memory = parseMemory $ T.pack s
+                         , pc = 0
+                         , outputs = []
+                         , rbase = 0
+                         }
 
 parseMemory :: T.Text -> Memory
 parseMemory t =
@@ -75,95 +64,131 @@ parseMemory t =
             _ -> M.empty
 
 getOutputs :: Program -> (Program, [Output])
-getOutputs (HALTED o) = (HALTED o, o)
-getOutputs (RUNNING m c o b) = (RUNNING m c [] b, o)
-getOutputs (WAITING m c o b) = (WAITING m c [] b, o)
+getOutputs p = (p { outputs = [] }, outputs p)
 
 isHalted :: Program -> Bool
-isHalted HALTED{} = True
-isHalted _ = False
+isHalted = (==HALTED) . runState
 
 runProgram :: Program -> Maybe Input -> Program
-runProgram p@HALTED{} _ = p
-runProgram p@WAITING{} Nothing = p
-runProgram (WAITING m c o b) mi = runProgram (RUNNING m c o b) mi
-runProgram p@(RUNNING m' pc _ _) i =
-    let inst = parseInstruction m' pc
-        (p', input) = executeInstruction i p inst in
-          runProgram p' input
+runProgram p minput =
+    case runState p of
+        HALTED -> p
+        WAITING -> if isJust minput then
+                        runProgram p { runState = RUNNING} minput
+                   else
+                        p
+        RUNNING ->
+            case parseInstruction (memory p) (pc p) of
+                ADD a b c ->
+                    let p' = p { memory =
+                                    M.insert (runWADDR c p)
+                                             (runRADDR a p + runRADDR b p)
+                                             (memory p)
+                                , pc = pc p + 4
+                                } in
+                    runProgram p' minput
+                MUL a b c ->
+                    let p' = p { memory =
+                                    M.insert (runWADDR c p)
+                                             (runRADDR a p * runRADDR b p)
+                                             (memory p)
+                                , pc = pc p + 4
+                                } in
+                    runProgram p' minput
+                STORE a ->
+                    case minput of
+                        Nothing -> p
+                        Just b ->
+                            let p' = p { memory = M.insert (runWADDR a p)
+                                                           b
+                                                           (memory p)
+                                        , pc = pc p + 2
+                                        } in
+                            runProgram p' Nothing
+                LOAD a  ->
+                    let p' = p { pc = pc p + 2
+                               , outputs = outputs p ++ [runRADDR a p]
+                               } in
+                    runProgram p' minput
+                JMPT a b ->
+                    let p' = p { pc = if runRADDR a p /= 0 then
+                                        fromInteger $ runRADDR b p
+                                      else
+                                        pc p + 3
+                                } in
+                    runProgram p' minput
+                JMPF a b ->
+                    let p' = p { pc = if runRADDR a p == 0 then
+                                        fromInteger $ runRADDR b p
+                                      else
+                                        pc p + 3
+                                } in
+                    runProgram p' minput
+                LT' a b c   ->
+                    let p' = p { memory =
+                                    M.insert (runWADDR c p)
+                                             (if runRADDR a p < runRADDR b p
+                                              then 1 else 0)
+                                             (memory p)
+                                , pc = pc p + 4
+                                } in
+                    runProgram p' minput
+                EQ' a b c   ->
+                    let p' = p { memory =
+                                    M.insert (runWADDR c p)
+                                             (if runRADDR a p == runRADDR b p
+                                              then 1 else 0)
+                                             (memory p)
+                                , pc = pc p + 4
+                                } in
+                    runProgram p' minput
+                RB a ->
+                    let p' = p { pc = pc p + 2
+                               , rbase = rbase p + runRADDR a p } in
+                    runProgram p' minput
+                HALT -> p { runState = HALTED }
 
-fd :: Memory -> Int -> Integer
-fd m i = M.findWithDefault 0 i m
+fd :: Memory -> PC -> Integer
+fd m pc = M.findWithDefault 0 pc m
 
 parseInstruction :: Memory -> PC -> Instruction
-parseInstruction p i =
-    let inst     = p `fd` i
-        a        = (inst `div` 10000)
-        b        = (inst `mod` 10000) `div` 1000
-        c        = (inst `mod` 1000)  `div` 100
-        de       = (inst `mod` 100)
-        -- addr b a = case b of
-        --              0 -> ADDR $ fromIntegral . flip fd (fromInteger a) . memory
-        --              1 -> ADDR $ const (fromIntegral a)
-        --              2 -> ADDR $ fromInteger . (+a) . rbase
-        --              _ -> error "not supported mode"
-        waddr b a = case b of
-                    0 -> WADDR $ fromInteger . const a
-                    2 -> WADDR $ fromInteger . (+a) . rbase
-                    _ -> error $ "not supported write mode " ++ show b ++ " " ++ show a
-        raddr b a = case b of
-                      0 -> ADDR $ flip fd (fromInteger a) . memory
-                      1 -> ADDR $ const a
-                      2 -> ADDR $ \p -> fd (memory p) (fromInteger $ rbase p + a)
-                      _ -> error $ "not supported load mode " ++ show b ++ " " ++ show a
+parseInstruction m pc =
+    let inst     = m `fd` pc
+        mode3        = (inst `div` 10000)
+        mode2        = (inst `mod` 10000) `div` 1000
+        mode1        = (inst `mod` 1000)  `div` 100
+        opcode       = (inst `mod` 100)
+        waddr mode val =
+            case mode of
+                0 -> WADDR $ fromInteger . const val
+                2 -> WADDR $ fromInteger . (+val) . rbase
+                _ -> error $ "unsupported write mode " ++ show mode
+        raddr mode val =
+            case mode of
+                0 -> RADDR $ flip fd (fromInteger val) . memory
+                1 -> RADDR $ const val
+                2 -> RADDR $ \p -> fd (memory p) (fromInteger $ rbase p + val)
+                _ -> error $ "unsupported read mode " ++ show mode
     in
-        case de of
-            1 -> ADD (raddr c (p `fd` (i+1)))
-                     (raddr b (p `fd` (i+2)))
-                     (waddr a (p `fd` (i+3)))
-            2 -> MUL (raddr c (p `fd` (i+1)))
-                     (raddr b (p `fd` (i+2)))
-                     (waddr a (p `fd` (i+3)))
-            3 -> STORE $  waddr c (p `fd` (i+1))
-            4 -> LOAD $ raddr c (p `fd` (i+1))
-            5 -> JMPT (raddr c (p `fd` (i+1))) (raddr b (p `fd` (i+2)))
-            6 -> JMPF (raddr c (p `fd` (i+1))) (raddr b (p `fd` (i+2)))
-            7 -> LT' (raddr c (p `fd` (i+1)))
-                     (raddr b (p `fd` (i+2)))
-                     (waddr a (p `fd` (i+3)))
-            8 -> EQ' (raddr c (p `fd` (i+1)))
-                     (raddr b (p `fd` (i+2)))
-                     (waddr a (p `fd` (i+3)))
-            9 -> RB $ raddr c (p `fd` (i+1))
+        case opcode of
+            1 -> ADD (raddr mode1 (m `fd` (pc+1)))
+                     (raddr mode2 (m `fd` (pc+2)))
+                     (waddr mode3 (m `fd` (pc+3)))
+            2 -> MUL (raddr mode1 (m `fd` (pc+1)))
+                     (raddr mode2 (m `fd` (pc+2)))
+                     (waddr mode3 (m `fd` (pc+3)))
+            3 -> STORE $ waddr mode1 (m `fd` (pc+1))
+            4 -> LOAD $ raddr mode1 (m `fd` (pc+1))
+            5 -> JMPT (raddr mode1 (m `fd` (pc+1)))
+                      (raddr mode2 (m `fd` (pc+2)))
+            6 -> JMPF (raddr mode1 (m `fd` (pc+1)))
+                      (raddr mode2 (m `fd` (pc+2)))
+            7 -> LT' (raddr mode1 (m `fd` (pc+1)))
+                     (raddr mode2 (m `fd` (pc+2)))
+                     (waddr mode3 (m `fd` (pc+3)))
+            8 -> EQ' (raddr mode1 (m `fd` (pc+1)))
+                     (raddr mode2 (m `fd` (pc+2)))
+                     (waddr mode3 (m `fd` (pc+3)))
+            9 -> RB $ raddr mode1 (m `fd` (pc+1))
             99 -> HALT
-            _ -> error $ "unknown instruction " ++ show ((a,b,c), de, p, i)
-
-executeInstruction :: Maybe Input
-                   -> Program
-                   -> Instruction
-                   -> (Program, Maybe Input)
-executeInstruction mi p@(HALTED _) _ = (p, mi)
-executeInstruction Nothing p@WAITING{} _ = (p, Nothing)
--- executeInstruction input p@(WAITING _ _ (Just _) _) _ = (p, input)
-executeInstruction input p@(WAITING m pc o b) i =
-    executeInstruction input (RUNNING m pc o b) i -- try running again
-executeInstruction mi p@(RUNNING m pc outputs base) i =
-    case i of
-        ADD a b c   ->
-            (RUNNING (M.insert (runWADDR c p) (fromIntegral (runADDR a p + runADDR b p)) m) (pc + 4) outputs base, mi)
-        MUL a b c   ->
-            (RUNNING (M.insert (runWADDR c p) (fromIntegral (runADDR a p * runADDR b p)) m) (pc + 4) outputs base, mi)
-        STORE a -> case mi of
-                        Nothing -> (WAITING m pc outputs base, mi)
-                        Just b -> (RUNNING (M.insert (runWADDR a p) b m) (pc + 2) outputs base, Nothing)
-        LOAD a  -> (RUNNING m (pc + 2) (outputs ++ [runADDR a p]) base, mi)
-        JMPT a b ->
-            (RUNNING m (if runADDR a p /= 0 then fromInteger $ runADDR b p else pc + 3) outputs base, mi)
-        JMPF a b ->
-            (RUNNING m (if runADDR a p == 0 then fromInteger $ runADDR b p else pc + 3) outputs base, mi)
-        LT' a b c   ->
-            (RUNNING (M.insert (runWADDR c p) (if runADDR a p < runADDR b p then 1 else 0) m) (pc + 4) outputs base, mi)
-        EQ' a b c   ->
-            (RUNNING (M.insert (runWADDR c p) (if runADDR a p == runADDR b p then 1 else 0) m) (pc + 4) outputs base, mi)
-        RB a -> (RUNNING m (pc + 2) outputs (base + runADDR a p), mi)
-        HALT -> (HALTED outputs, mi)
+            _ -> error $ "unknown opcode " ++ show opcode
